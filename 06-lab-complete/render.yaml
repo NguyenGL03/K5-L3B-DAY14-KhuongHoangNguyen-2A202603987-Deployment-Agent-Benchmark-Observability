@@ -5,3 +5,13 @@
 #     - envVars: secret như AGENT_API_KEY dùng `generateValue: true` hoặc `sync: false`,
 #       KHÔNG ghi thẳng giá trị
 # ============================================================
+services:
+  - type: web
+    name: ai-agent-api
+    runtime: docker
+    healthCheckPath: /health
+    envVars:
+      - key: AGENT_API_KEY
+        sync: false
+      - key: REDIS_URL
+        sync: false
