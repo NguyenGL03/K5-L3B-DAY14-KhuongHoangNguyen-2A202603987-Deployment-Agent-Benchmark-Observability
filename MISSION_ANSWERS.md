@@ -249,7 +249,36 @@ Sau khi kiểm tra xong đã chạy `docker compose -p k5-day14-docker -f 02-doc
 
 ## Part 3: Cloud Deployment
 
-*(Đang chờ thực hiện tại CP6)*
+### Exercise 3.2: Deploy agent Part 6 lên Render
+
+- **URL public:** https://ai20k-cohort5-lab14.onrender.com
+- **Kết quả kiểm tra live endpoint trên Render:**
+  - `GET /health` → **`200`** (`{"status":"ok","environment":"production"}`)
+  - `GET /ready` → **`200`** (`{"ready":true}` — đã kết nối Redis trên Render)
+  - `POST /ask` (không có `X-API-Key`) → **`401`** (`{"detail":"Invalid or missing API key"}`)
+  - `POST /ask` (có `X-API-Key: $AGENT_API_KEY`) → **`200`** *(chạy kiểm tra trực tiếp cùng ảnh chụp `screenshots/test.png`)*
+- **Screenshots:** `screenshots/dashboard.png`, `screenshots/running.png`, `screenshots/test.png`
+
+---
+
+### So sánh `railway.toml` và `render.yaml`
+
+| Tiêu chí | `railway.toml` | `render.yaml` | Vì sao khác nhau? |
+| :--- | :--- | :--- | :--- |
+| **Định dạng & Phạm vi** | **TOML**, cấu hình cho **1 service** qua 2 section `[build]` và `[deploy]`. | **YAML (Render Blueprint / IaC)**, khai báo được **nhiều service** dưới `services:` (`type: web`, `type: redis`, `disk`, `region`, `plan`). | Railway tách phần tạo DB/Redis và biến môi trường ra Dashboard/CLI, còn Render cho phép mô tả toàn bộ hạ tầng nhiều service trong một file YAML để đồng bộ qua Blueprint. |
+| **Build & Runtime** | Dùng `builder = "DOCKERFILE"` hoặc `"NIXPACKS"`, kèm `startCommand`. | Dùng `runtime: docker` (hoặc `runtime: python` kèm `buildCommand` và `startCommand`). | Phản ánh cơ chế build của từng nền tảng (Railway hỗ trợ Nixpacks tự nhận diện ngôn ngữ hoặc Dockerfile; Render chọn runtime rõ ràng trên mỗi service). |
+| **Health check & Restart** | Có `healthcheckPath = "/health"`, `healthcheckTimeout = 30`, `restartPolicyType = "ON_FAILURE"`, `restartPolicyMaxRetries = 3`. | Có `healthCheckPath: /health`, `autoDeploy: true`; chính sách restart do Render tự quản lý theo health check. | Railway cho phép tinh chỉnh trực tiếp chính sách retry/timeout khi crash ngay trong `railway.toml`. |
+| **Biến môi trường & Secret** | Không khai báo trong file; đặt qua Railway Dashboard hoặc CLI (`railway variables set ...`). | Khai báo ngay trong `envVars:` của service; secret dùng `sync: false` hoặc `generateValue: true` để không ghi giá trị thật vào Git. | `render.yaml` là file IaC nên cần cơ chế placeholder (`sync: false` / `generateValue`) để vẫn khai báo tên biến mà không lộ secret trên repository. |
+
+---
+
+### Exercise 3.3: Pipeline CI/CD GCP Cloud Run (`03-cloud-deployment/production-cloud-run/`)
+
+Dựa trên `cloudbuild.yaml` và `service.yaml`, pipeline CI/CD khi push code lên nhánh `main` đi qua 4 bước tuần tự (`waitFor`):
+1. **Test (`test`):** Chạy container `python:3.11-slim`, cài `requirements.txt` + `pytest` và thực thi `pytest tests/ -v --tb=short`; chỉ tiếp tục nếu toàn bộ test pass.
+2. **Build (`build`):** Dùng `gcr.io/cloud-builders/docker` build image gắn tag `$COMMIT_SHA` và `latest`, tận dụng `--cache-from` từ image `latest` trước đó để giảm thời gian build.
+3. **Push (`push`):** Đẩy toàn bộ các tag của image lên Google Container Registry (`gcr.io/$PROJECT_ID/ai-agent`).
+4. **Deploy (`deploy` + `service.yaml`):** Chạy `gcloud run deploy ai-agent` triển khai bản `$COMMIT_SHA` lên Cloud Run (`asia-southeast1`, `min-instances=1` tránh cold start, `max-instances=10`, `containerConcurrency=80`), nạp secret an toàn từ Secret Manager (`secretKeyRef` / `--set-secrets`) và cấu hình `livenessProbe` (`/health`) cùng `startupProbe` (`/ready`).
 
 ---
 
@@ -455,3 +484,6 @@ Chạy `python check_production_ready.py` (chế độ đầy đủ trong Ubuntu
 - **CP3:** Dùng AI hỗ trợ chạy và test `04-api-gateway/develop/app.py` và `04-api-gateway/production/app.py` trong Ubuntu WSL2; tổng hợp cơ chế API Key, JWT, Sliding Window Rate Limiter và Cost Guard vào `MISSION_ANSWERS.md`. Đã tự kiểm tra các mã HTTP thực tế (`401`, `403`, `200`, `429`), che JWT token trước khi lưu và đối chiếu dòng code trong `auth.py`, `rate_limiter.py`, `cost_guard.py`.
 - **CP4:** Dùng AI hỗ trợ test `/health`, `/ready` và graceful shutdown (`SIGTERM`) trên `05-scaling-reliability/develop/app.py` trong WSL2, và test stack `--scale agent=3` (`k5-day14-scaling`) qua Nginx (map tạm cổng `18080` do cổng `8080` host bận bởi `AgentService`) với `test_stateless.py`. Đã kiểm tra thực tế cả 3 `instance_id` xử lý round-robin, đủ 10 messages trong Redis history, và dọn stack bằng `docker compose down`.
 - **CP5:** Dùng AI hỗ trợ hoàn thiện các `TODO` trong `06-lab-complete/` (`app/config.py`, `app/redis_client.py`, `app/auth.py`, `app/rate_limiter.py`, `app/cost_guard.py`, `app/main.py`, `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `.env.example`, kết hợp cùng `render.yaml` đã cấu hình). Đã tự chạy `python check_production_ready.py` bản đầy đủ trong Ubuntu WSL2 và kiểm tra kết quả đạt `PASS 12/12` (`42/42 checks passed`, image `238 MB`, `docker stop` `0.7s`).
+- **CP6 (phần chuẩn bị & phân tích):** Dùng AI đối chiếu `03-cloud-deployment/railway/railway.toml`, `render.yaml` và `03-cloud-deployment/production-cloud-run/` (`cloudbuild.yaml`, `service.yaml`) để tổng hợp bảng so sánh và mô tả pipeline CI/CD vào `MISSION_ANSWERS.md`, cùng khung `DEPLOYMENT.md`.
+- **CP7:** Dùng AI hỗ trợ thêm metric `agent_question_length_chars` vào `develop/app.py`, chạy các kịch bản `load_test.py` (`c=1,10,50,100` và `MOCK_SLOW_RATE=0, 0.03, 0.1`), chạy `eval/run_eval.py`, cập nhật `KNOWLEDGE_BASE` trong `mock_llm.py` (đạt `23/23` không regression) và tạo `.github/workflows/eval.yml`. Mọi số liệu trong `BENCHMARK_REPORT.md` đều đã được đối chiếu khớp trực tiếp với các file JSON trong `reports/`.
+- **CP8:** Dùng AI hỗ trợ sửa `PYTHONUSERBASE=/home/agent/.local` trong `benchmark-observability/production/Dockerfile`, chạy `promtool test rules`, chạy Locust headless `--no-deps` cho `scale_1` (1 instance) và `scale_3` (3 instances), truy xuất span/trace_id/log JSON trong Jaeger và chạy thí nghiệm phá hệ thống (`MOCK_ERROR_RATE=0.2`, `MOCK_SLOW_RATE=0.3`) ghi nhận `AgentHighErrorRate` (`70s`) và `AgentHighLatencyP95` (`130s`) firing đồng thời. Đã đối chiếu toàn bộ số liệu trong `BENCHMARK_REPORT.md` khớp với `scale_1_stats.csv`, `scale_3_stats.csv`, Prometheus và Jaeger.
